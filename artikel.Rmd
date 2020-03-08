@@ -1,0 +1,522 @@
+---
+title: "Clustering Saham Indonesia"
+author: "David"
+date: "3/6/2020"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float:
+      collapsed: true
+    number_sections: true
+    theme: flatly
+    highlight: tango
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F, fig.width=12)
+options(scipen = 123)
+```
+
+# Pendahuluan
+
+Saham merupkan satuan nilai atau pembukuan dalam berbagai instrumen finansial yang mengacu pada bagian kepemilikan sebuah perusahaan. Perusahaan yang dapat menjual sahamnya ke publik merupakan saham yang sudah listing di bursa atau sering disebut sudah melakukan Initial Public Offering ([IPO](www.investopedia.com/terms/i/ipo.asp)). Terdapat sekitar 680 saham per Maret 2020 yang sudah listing di bursa efek dan jumlahnya terus bertambah seiring berjalannya waktu. Setiap saham yang melantai dibursa memiliki karakteristik yang berbeda beda baik dari sisi fundamental perusahaan maupun teknikal, oleh sebab itu perlu dilakukan pengelompokkan emiten berdasarkan karakteristik dari saham itu sendiri.
+
+Clustering merupakan salah satu teknik dari Unsupervised machine learning yang bertujuan mengelompokkan data berdasarkan kemiripan antar data. terdapat banyak pendekatan untuk melakukan clustering seperti partitional methods, density methods, hirarcical method [dll](en.wikipedia.org/wiki/Cluster_analysis). Pada artikel ini metode yang akan digunakan adalah partitional methods yang mana user harus mendefinisikan jumlah cluster yang ingin dibentuk, kelebihan metode ini juga adalah dapat melakukan profiling pada hasil cluster. 
+
+## Tujuan
+
+- Melakukan clustering terhadap saham yang ada di Bursa Efek Indonesia, berdasarkan pergerakan harga saham setiap harinya
+- Melakukan Profiling dari cluster yang didapat
+
+
+## Setup
+
+Berikut library yang digunakan pada artikel ini 
+```{r}
+# wrangling and EDA
+library(tidyverse)
+library(tidyquant)
+library(lubridate)
+
+# Visualization
+library(GGally)
+library(ggthemes)
+library(scales)
+
+#clustering
+library(factoextra)
+library(FactoMineR)
+library(dbscan)
+library(cluster)
+```
+
+# Data
+## Pengumpulan Data
+Terdapat 2 sumber data yang digunakan pada analisis ini yaitu data profil perusahaan dan data pergerakan harga saham setiap harinya. Data profil perusahaan didapat dari website resmi Bursa Efek Indonesia ([IDX](https://www.idx.co.id/data-pasar/data-saham/daftar-saham/)) pengumpulan data dilakukan dengan cara scraping. Hasil data yang discraping kemudian di simpan dalam file `daftar_saham.csv`. Emiten yang akan dilakukan clustering adalah emiten yang sudah melantai di bursa sebelum tahun 2017, hal ini bertujuan untuk menghindari [IPO affect](https://budgeting.thenest.com/ipo-affect-stock-value-25189.html). 
+```{r message=F}
+profile <- read_csv("data_input/daftar_saham.csv") %>% 
+  mutate(ListingDate = as.Date(ListingDate)) %>% 
+  filter(year(ListingDate) < 2017)
+head(profile)
+```
+terdapat 6 variabel dari data profil perusahaan yaitu :    
+- `Code` : Kode Emiten perusahaan di bursa    
+- `Name` : Nama Perusahaan    
+- `ListingDate` : Tanggal Perusahaan pertama kali melantai dibursa    
+- `Share` : banyaknya lembar sahan suatu perusahaan    
+- `ListingBoard` : papan pencatatan saham (Pengembangan dan Utama)    
+- `Sector` : kategori perusahaan berdasarkan sektornya [9 sektor saham](https://investorsadar.com/sektor/)    
+
+Data pergerakan harga saham didapat dari yahoo finance yang bisa langsung diakes menggunakan function `tq_get()` dari packages `tidyquant`. function tersebut membutuhkan parameter x yang merupakan kode emiten yang ingin diambil datanya. Kode saham diambil dari variabel `Code` pada data profile. Kode Emiten diberikan akhiran `.JK` yang menunjukkan bahwa kode emiten tersebut berasal dari Indonesia.
+
+```{r}
+emiten_code <- profile %>% 
+  mutate(Code = paste0(Code,".JK")) %>% 
+  pull(Code) %>% 
+  as.character()
+emiten_code[1:5]
+```
+
+setelah kode emiten sudah didapat tahap selanjutnya mengambil pergerakan harga saham setiap harinya mulai dari awal tahun 2017 hingga akhir tahun 2019 untuk setiap emiten menggunakan fungsi `tq_get()`. Data yang sudah diambil kemudian di simpan dalam file `stocks.csv` dan menghilangkan `.JK` pada kode emiten
+```{r}
+# stocks <- tq_get(emiten_code, from = "2017-01-01", to = "2019-12-31")
+stocks <- readr::read_csv("data_input/stocks.csv") %>% 
+  mutate(symbol = str_remove_all(symbol, ".JK"))
+head(stocks)
+```
+pada data stocks terdapat 8 variabel yaitu :    
+- `symbol` : Kode Emiten perusahaan di bursa    
+- `date` : Tanggal dari harga saham    
+- `open` : Harga pembukaan    
+- `high` : Harga tertinggi    
+- `low` : Harga terendah     
+- `close` : Harga penutupan     
+- `volume` : banyaknya lembar saham yang diperdagangkan    
+- `adjusted` : harga penutupan yang sudah disesuikan dengan aksi korporasi lainnya. [adj close](https://www.investopedia.com/terms/a/adjusted_closing_price.asp)    
+
+Terdapat beberapa kode saham yang tidak dapat diambil data pergerakan harganya, hal ini disebabkan tidak adanya kode emiten pada yahoo finance. berikut adalah kode emiten tersebut
+```{r}
+done <- stocks %>% 
+  pull(symbol) %>% 
+  unique()
+
+profile %>% 
+  filter(!Code %in% done) %>% 
+  pull(Code)
+```
+
+
+## Variabel
+
+Untuk mendapatkan hasil cluster yang optimal perlu dilakukan feature engineering berdasarkan data yang sudah didapat. pada proses clustering ini akan digunakan data yang menunjukkan volatilitas (Volatility), liquiditas (Liquidity) serta kapasitas (size) dari suatu saham
+
+### Volatilitas (Volatility)
+
+Volatilitas merupakan indikator seberapa besar perubahan harga saham setiap harinya. Volatilitas suatu saham bisa dilihat dari persentase perubahan harga saham setiap harinya, apabila suatu saham dapat naik dan turun dengan persentase yang besar maka saham tersebut bisa dikatakan memiliki Volatilitas yang tinggi begitu juga sebaliknya. Nilai yang bisa digunakan untuk mengukur tingkat Volatilitas suatu saham yaitu standar deviasi dari persentase perubahan harga. [volatility](https://www.investopedia.com/terms/v/volatility.asp)
+
+Perhitungan standar deviasi dilakukan pada persentase perubahan harga disetiap tahunnya. Semakin besar nilai standar deviasi maka perubahan harga saham dapat berubah dengan cepat setiap harinya. 
+```{r}
+stocks %>% 
+  na.omit() %>% 
+  mutate(change = (close- lag(close))/lag(close)) %>%
+  group_by(symbol, year(date)) %>% 
+  summarise(sdclose = StdDev(change)
+            ) %>% 
+  ungroup() %>% 
+  head(6)
+```
+
+## Likuiditas (Liquidity)
+Likuiditas merupakan indikator seberapa mudah saham tersebut untuk dijual dan dibeli tanpa mempengaruhi harga aset. likuiditas suatu saham dapat dilihat dari volume saham itu. Semakin besar volume dari suatu saham yang diperdagangkan setiap harinya maka  semakin liquid saham tersebut. Median dari volume saham akan digunakan sebagai indikator likuiditas suatu saham. Median dipilih karena tidak sensitif terhadap oulier dibandingkan rata rata (mean).
+
+bila hanya melihat dari segi volume saja maka dapat terjadi bias, hal ini dikarenakan jumlah saham yang beredar dari setiap perusahaan berbeda beda oleh sebab itu volume suatu saham akan dibagi terlebih dahulu dengan total share setiap saham. total share didapat dari data `profile` sehingga perlu dilakukan join terlebih dahulu.
+```{r}
+
+```
+
+
+
+Plot histogram dibawah menunjukkan 2 jenis saham berdasarkan likuiditasnya. Plot dengan warna merah merupakan saham paling likuid berdasarkan mediannya, sedangkan plot yang berwarna biru merupakan saham tidak liquid berdasarkan mediannya
+```{r}
+liq_stocks <- stocks %>% 
+  na.omit() %>% 
+  left_join(profile, by = c("symbol" = "Code")) %>% 
+  mutate(volume = volume / Shares) %>% 
+  group_by(symbol) %>% 
+  summarise(med_vol = median(volume)) %>% 
+  ungroup() %>% 
+  arrange(desc(med_vol)) %>% 
+  slice(1:3,508:510) %>% 
+  pull(symbol)
+
+stocks %>% 
+  na.omit() %>% 
+  filter(symbol %in% liq_stocks) %>%
+  mutate(med = ifelse(symbol %in% liq_stocks[1:3], "high", "low")) %>% 
+  ggplot(aes(volume)) +
+  geom_histogram(aes(fill = med)) +
+  facet_wrap(~symbol, scales = "free") +
+  theme_pander()
+  
+```
+
+
+## Size
+size merupakan ukuran seberapa besar perusahaan berdasarkan harga sahamnya. Nilai size bisa diwakili oleh market capitalization(market cap), market cap merupakan perkalian antar total share dengan harga saham tersebut. Semakin besar market cap maka semakin sulit untuk harga saham dipermainkan oleh segelintir orang. 
+pada data ini market cap yang akan digunakan mengacu pada harga penutupan akhir tahun 2019
+```{r}
+market_cap <- stocks %>% 
+  group_by(symbol) %>% 
+  slice(n()) %>% 
+  ungroup() %>% 
+  left_join(profile, by = c("symbol" = "Code")) %>% 
+  mutate(market_cap = close *Shares) %>% 
+  select(symbol, market_cap) %>% 
+  arrange(desc(market_cap))
+
+market_cap %>% 
+  slice(-1) %>% 
+  head(10) %>% 
+  left_join(profile, by = c("symbol" = "Code")) %>% 
+  ggplot(aes(x = reorder(symbol, market_cap), y = market_cap)) +
+  geom_col(aes(fill = sector)) +
+  coord_flip() +
+  labs(title = "Top 10 Market Capitalization", 
+       subtitle = "30-12-2019", 
+       x = "Emiten", 
+       y = "Market Capitalization on IDR") +
+  scale_y_continuous(labels = scales::comma)+
+  theme_pander()
+```
+
+# Clustering
+
+## Create Data frame
+Setelah mengetahui variabel apa saja yang akan digunakan dalam proses clustering, tahap selanjutnya adalah menggabungkan semua variabel tersebut menjadi 1 dataframe.
+```{r}
+stocks_agg <- stocks %>% 
+  na.omit() %>% 
+  mutate(change = (close- lag(close))/lag(close)) %>% 
+  group_by(symbol, year(date)) %>% 
+  summarise(sdclose = StdDev(change), # volatility
+            medvol = round(median(volume)) # liquidity
+            ) %>% 
+  ungroup() %>% 
+  left_join(select(profile, Code, Shares) , by = c("symbol"="Code")) %>% 
+  mutate(medvol = medvol/Shares*100) %>% 
+  select(-Shares) %>% 
+  rename(year = 2)
+head(stocks_agg)
+```
+dari hasil aggregasi data diatas didapat 4 variabel yaitu `symbol`, `year`, `sdclose`, `medvol`. `sdclose` merupakan standar deviasi dari close price, dan `medvol` merupakan median dari volume yang sudah dibagi dengan total share dari masing masing emiten.Agar data tersebut dapat digunakan pada proses clustering maka satu baris harus mewakili 1 saham sehingga perlu dilakukan transformasi data menjadi *wide format data frame* serta menambahakan data market cap.
+```{r}
+data_final <-  stocks_agg %>% 
+  rename(year = 2) %>% 
+  pivot_wider(names_from = year, values_from = c(3:4)) %>% 
+  left_join(market_cap) %>% 
+  select(symbol, market_cap, everything()) %>% 
+  replace(is.na(.),0) %>% 
+  column_to_rownames(var = "symbol")
+data_final
+```
+
+Data untuk proses clustering sudah siap, `data_final` terdiri dari 510 baris yang setiap barisnya mewakili 1 emiten. variabel yang digunakan dalam proses clustering terdapat 7 variabel yaitu market_cap, standar deviasi, dan median dari tahun 2017 hingga 2019. 
+
+## Outlier Detection
+Algoritma yang akan digunakan dalam clustering ini adalah K-means, kekurangan dari algoritma ini adalah tidak bisa mengatasi outlier. Proses pendeteksian Oulier akan dilakukan dengan 2 cara yaitu dengan metode PCA yang memanfaatkan biplot dan algoritma DBSCAN. 
+
+### PCA
+Principal Component Analysis merupakan teknik mereduksi dimensi dengan memanfaatkan korelasi antar variabel yang ada, tujuan dari PCA ini adalah untuk mengetahui saham yang outlier melalui visualisasi biplot. Function yang digunakan dalam pembuatan PC adalah `PCA()` dan untuk untuk membuat biplotnya menggunakan `plot.PCA()` dari package `FactoMineR`. 
+```{r}
+stocks_PCA <- PCA(data_final, graph = F)
+plot.PCA(stocks_PCA,choix = "ind", select = "contrib10")
+```
+
+
+dari visualisasi diatas bisa dilihat bahwa emiten BCIC merupakan saham yang paling jauh dari kumpulan data (outlier). 
+
+
+### DBSCAN
+DBSCAN merupakan salah satu algoritma clustering yang bersifat density based. metode cluster ini dapat mendeteksi data outlier. berbeda dengan algoritma k-means yang harus menentukan jumlah cluster diawal, metode ini memerlukan minpts dan epsilon saja untuk proses pembuatan clusternya. Bila anda ingin mempelajari metode ini bisa buka artikel terkait [DBSCAN](https://algotech.netlify.com/blog/dbscan-clustering/). 
+
+untuk mencari nilai eps yang tepat dari minPts bisa digunakan teknik knee plot. hal ini bertujuan mencari nilai eps yang optimum untuk nilai k tertentu. pada kasus ini bisa dilihat bahwa nilai 2.5 memotong garis ditengah siku, oleh sebab itu nilai eps yang digunakan adalah 2.5 dengan minPts = 8
+```{r}
+kNNdistplot(scale(data_final), k = 8)
+abline(h = 2.5, col = "red")
+```
+
+
+
+```{r}
+# DBSCAN clustering
+dbscan_clust <- dbscan(scale(data_final), eps = 2.5, minPts = 8)
+
+# cluster yang outlier
+stocks_anomaly <- data_final %>% 
+  rownames_to_column(var = "symbol") %>% 
+  mutate(temp_clust = dbscan_clust$cluster) %>% 
+  filter(temp_clust==0) %>% 
+  pull(symbol)
+stocks_anomaly
+```
+
+
+
+untuk proses clustering selanjutnya stocks yang dikategorikan anomali tidak diikut sertakan karena dapat mengganggu proses pembuatan cluster.
+```{r}
+data_final_scale <- data_final %>% 
+  rownames_to_column(var = "symbol") %>% 
+  mutate(temp_clust = dbscan_clust$cluster) %>% 
+  filter(temp_clust!=0) %>% 
+  column_to_rownames(var = "symbol") %>% 
+  select(-temp_clust) %>% 
+  scale()
+```
+
+## Clustering using K-Means
+
+K-means Merupakan algoritma clustering yang masuk ke kategori *partitioning clustering* yang berarti jumlah cluster ditentukan oleh user. algoritma K-Means menghasilkan pusat cluster yang disebut centroid. Centroid dari setiap cluster bukanlah sebuah data melainkan rata-rata (mean) dari setiap variabel untuk setiap cluster. untuk menentukan nilai K yang optimum bisa digunakan teknik elbow method. Elbow method digunakan untuk mencari jumlah cluster yang optimum pada algoritma K-Means. elbow method mengoptimalkan cost function dari perubahan setiap jumlah cluster (K). 
+
+
+```{r}
+RNGkind(sample.kind = "Rounding")
+kmeansTunning <- function(data, maxK) {
+  withinall <- NULL
+  total_k <- NULL
+  for (i in 2:maxK) {
+    set.seed(120)
+    temp <- kmeans(data,i)$tot.withinss
+    withinall <- append(withinall, temp)
+    total_k <- append(total_k,i)
+  }
+  plot(x = total_k, y = withinall, type = "o", xlab = "Number of Cluster", ylab = "Total within")
+}
+kmeansTunning(data_final_scale, maxK = 10)
+```
+dari elbow plot diatas bisa dilihat ketika jumlah cluster ditambah dari 8 ke 9 penurunan nilai total withinss sudah tidak pesat lagi, sehingga jumlah cluster yang diambil adalah 8.   
+
+```{r fig.width=12}
+set.seed(120)
+clust <- kmeans(data_final_scale,8)
+fviz_cluster(clust, data_final_scale)
+```
+
+
+jumlah anggota dari ke 8 cluster berbeda beda cluster dengan nilai withinss terkecil merupakan cluster 6 yang hanya memiliki 2 anggota, sedangkan cluster 5 merupakan cluster dengan jumlah anggota terbanyak.
+```{r}
+kmeans_total <- clust$cluster %>% 
+  table() %>% 
+  as.numeric()
+
+data.frame(cluster = c(1:8), 
+           member = kmeans_total, 
+           withinss = clust$withinss) %>% 
+  arrange(withinss)
+```
+
+salah satu nilai yang bisa digunakan untuk mengetahui seberapa baik cluster yang dihasilkan adalah perbandingan antara between_SS dengan total_SS. hasil yang didapat dari perbandingan kedua nilai tersebut adalah 73.5 % yang mana apabila semakin mendekati 100% mengindikasikan data berkumpul di pusat cluster 
+```{r}
+clust$betweenss / clust$totss *100
+```
+
+
+## Clustering Using K-medoid
+
+```{r}
+kmedoid <- pam(x = data_final_scale, k = 8)
+fviz_cluster(kmedoid, data_final_scale)
+```
+
+
+```{r}
+med_sil <- kmedoid %>% 
+  silhouette() %>% 
+  summary()
+
+kmedoid$clusinfo %>% 
+  as.data.frame() %>% 
+  mutate(avg_sil = med_sil$clus.avg.widths)
+```
+
+size : jumlah anggota cluster
+max_diss : nilai perbedaan paling maksimum antara data terhadap medoid (data yang menjadi pusat cluster)
+av_diss : rata rata nilai perbedaan antar data terhadap medoid
+diameter : perbedaan terbesar antar 2 data dalam 1 cluster
+separator : perbedaan paling kecil antar data dalam cluster terhadap data yang berada di cluster lain
+avg_sil : rata2 silhouette value
+maximum separator
+min diameter
+min max_dis
+
+
+# Cluster Evaluation
+
+```{r}
+data_final_scale %>% 
+  as.data.frame() %>% 
+  transmute(clust_means = clust$cluster, 
+         clust_medoid = kmedoid$clustering) %>% 
+  table() %>% 
+  as.data.frame() %>% 
+  ggplot(aes(x = clust_means, y = clust_medoid)) +
+  geom_raster(aes(fill = Freq))+
+  geom_text(aes(label = Freq), col = "white") +
+  scale_fill_gradient(low = "grey",
+  high = "red") +
+  labs(x = "K-Means Cluster", 
+       y = "K-Medoid Cluster")
+```
+dari visualisasi diatas bisa dilihat bahwa hasil cluster antara kmeans dan kmedoid mengelompokkn
+
+hasil pengelompokan data berdasarkan kmeans dan kmedoid tidak jauh berbeda hal ini ditunjukkan dengan tidak banyaknya perbedaan anggota cluster. anggota cluster 4 dari metode kmedoid merupakan anggota cluster 2,5, dan 7 dari cluster kmeans, hal itu disebabkan karena bila dilihat cluster tersebut berdekatan
+
+```{r}
+ggpubr::ggarrange(
+  fviz_cluster(clust, data_final_scale, main = "K-Means Clustering"),
+  fviz_cluster(kmedoid, data_final_scale, main = "K-Medoid Clustering"), 
+  ncol = 1  
+  )
+
+```
+
+## Cluster Profiling
+
+### K- Means 
+
+```{r}
+data_viz <-  data_final %>% 
+  rownames_to_column(var = "symbol") %>% 
+  mutate(temp_clust = dbscan_clust$cluster) %>% 
+  filter(temp_clust!=0) %>% 
+  column_to_rownames(var = "symbol") %>% 
+  mutate(clust_means = clust$cluster) %>% 
+  select(clust_means, everything(), -temp_clust)
+
+ p1 <- data_viz %>% 
+  pivot_longer(cols = -(1:2), names_to = c("kind","year"), 
+               names_pattern = "(.*)_(.*)") %>% 
+  ggplot(aes(x= clust_means, y = value)) +
+  geom_col(aes(fill = year), position = "dodge") +
+  facet_wrap(~kind, scales = "free") +
+  theme_minimal() +
+  theme(legend.position = "top")
+ 
+ 
+p2 <- data_viz %>% 
+  group_by(clust_means) %>% 
+  summarise(market_cap = mean(market_cap)) %>% 
+  ggplot(aes(x =clust_means, y = market_cap)) +
+  geom_col(fill = "dodgerblue") +
+  theme_minimal() +
+  labs(x = "Cluster", 
+       y = NULL) +
+  scale_y_continuous(labels = unit_format(unit = "T", scale = 1e-12))
+
+
+ggpubr::ggarrange(p1, p2)
+```
+
+
+
+
+
+### K- Means 
+
+```{r}
+data_viz <-  data_final %>% 
+  rownames_to_column(var = "symbol") %>% 
+  mutate(temp_clust = dbscan_clust$cluster) %>% 
+  filter(temp_clust!=0) %>% 
+  column_to_rownames(var = "symbol") %>% 
+  mutate(clust_means = kmedoid$clustering) %>% 
+  select(clust_means, everything(), -temp_clust)
+
+ p1 <- data_viz %>% 
+  pivot_longer(cols = -(1:2), names_to = c("kind","year"), 
+               names_pattern = "(.*)_(.*)") %>% 
+  ggplot(aes(x= clust_means, y = value)) +
+  geom_col(aes(fill = year), position = "dodge") +
+  facet_wrap(~kind, scales = "free") +
+  theme_minimal() +
+  theme(legend.position = "top")
+ 
+ 
+p2 <- data_viz %>% 
+  group_by(clust_means) %>% 
+  summarise(market_cap = mean(market_cap)) %>% 
+  ggplot(aes(x =clust_means, y = market_cap)) +
+  geom_col(fill = "dodgerblue") +
+  theme_minimal() +
+  labs(x = "Cluster", 
+       y = NULL) +
+  scale_y_continuous(labels = unit_format(unit = "T", scale = 1e-12))
+
+
+ggpubr::ggarrange(p1, p2)
+```
+
+
+**cluster from which method that would you use?**
+
+cluster dengan market cap terbesar ?
+cluter paling likuid / tidak ?
+cluster paling volatilitas ?
+
+
+
+
+bedah setiap cluster
+
+
+
+
+
+
+
+# Kesimpulan
+
+berapa cluster optimum?
+metode apa yang digunakan?
+bagaimana profil cluster secara general
+
+
+
+# Glossary
+
+
+## Stock Terms
+- Emiten 
+
+- IPO
+
+## Machine Learning Term
+
+
+- centroid
+
+- medoid
+
+- Unsupervised Learning
+
+- withinss
+
+- shilouette
+
+- knee
+
+- elbow
+
+
+# Reference
+For feature selection 
+https://www.investopedia.com/terms/f/factor-investing.asp
+
+SOM algorithm
+https://algotech.netlify.com/blog/self-organizing-maps/
+
+https://subscription.packtpub.com/book/big_data_and_business_intelligence/9781789956399/1/ch01lvl1sec08/introduction-to-k-medoids-clustering
+ 
+
+https://www.idx.co.id/data-pasar/data-saham/daftar-saham/
