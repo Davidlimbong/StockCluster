@@ -347,7 +347,7 @@ Data yang akan digunakan dalam proses clustering juga harus dilakukan scaling, h
 
 ##  K-Means
 
-K-Means merupakan algoritma clustering yang masuk kedalam kategori *partitioning clustering* yang berarti jumlah cluster ditentukan oleh user. Algoritma K-Means menghasilkan pusat cluster yang disebut centroid. Centroid dari setiap cluster bukanlah sebuah data melainkan sebuah titik yang merepresentasikan rata-rata (mean) nilai dari setiap variabel di setiap cluster. Penentuan nilai K yang optimum dapat menggunakan teknik elbow method. Elbow method mengoptimalkan jarak antar data ke centroid atau sering disebut within sum of square(wss). Nilai K yang optimum adalah ketika jumlah cluster ditambah namun penurunan wss tidak lagi drastis.
+K-Means merupakan algoritma clustering yang masuk kedalam kategori *partitioning clustering* yang berarti jumlah cluster ditentukan oleh user. Algoritma K-Means menghasilkan pusat cluster yang disebut centroid. Centroid dari setiap cluster bukanlah sebuah data melainkan sebuah titik yang merepresentasikan rata-rata (mean) nilai dari setiap variabel di setiap cluster. Penentuan nilai K yang optimum dapat menggunakan teknik elbow method. Elbow method mengoptimalkan jarak antar data ke centroid atau sering disebut within sum of square (wss). Nilai K yang optimum adalah ketika jumlah cluster ditambah namun penurunan wss tidak lagi drastis.
 
 ```{r fig.height=8}
 kmeansTunning <- function(data, maxK) {
@@ -373,7 +373,7 @@ clust <- kmeans(data_final_scale,7)
 fviz_cluster(clust, data_final_scale, ggtheme = theme_minimal()) 
 ```
 
-Jumlah data disetiap cluster berbeda beda. Cluster 4 merupakan cluster dengan anggota terkecil yaitu 2 data, sedangkan cluster 2 merupakan cluster terpadat dengan jumlah anggota sebesar 269 dan total wss sebesar 272. 
+Dari hasil visualisasi diatas dapat dilihat luas area dan jumlah anggota cluster berbeda. Hasil cluster dapat dilihat pada data dibawah, pada cluster 4 merupakan cluster dengan anggota terkecil yaitu 2 data, sedangkan cluster 2 merupakan cluster terpadat dengan jumlah anggota sebesar 269 dan total wss sebesar 272. 
 
 ```{r}
 kmeans_total <- clust$cluster %>% 
@@ -386,7 +386,7 @@ data.frame(cluster = c(1:7),
   arrange(wss)
 ```
 
-salah satu nilai yang bisa digunakan untuk mengetahui seberapa baik cluster yang dihasilkan oleh algoritma K-Means adalah perbandingan antara nilai  between_SS dengan total_SS. hasil pembagian antara `between_SS` dengan `total_SS` mengindikasikan seberapa berkumpul data di setiap centroidnya.   hasil yang didapat dari perbandingan kedua nilai tersebut adalah 69.1 % yang mana apabila semakin mendekati 100% semakin baik.
+Salah satu nilai yang bisa digunakan untuk mengetahui seberapa baik cluster yang dihasilkan oleh algoritma K-Means adalah perbandingan antara nilai  between_SS dengan total_SS. hasil pembagian antara `between_SS` dengan `total_SS` mengindikasikan seberapa berkumpul data di setiap centroidnya. Hasil yang didapat dari perbandingan kedua nilai tersebut adalah 69.1 % yang mana apabila semakin mendekati 100% semakin baik.
 
 ```{r}
 clust$betweenss / clust$totss *100
@@ -394,9 +394,8 @@ clust$betweenss / clust$totss *100
 
 ##  K-Medoid
 
-Sama seperti K-Means, K-Medoid merupakan algoritma clustering yang masuk kedalam kategori *partitioning clustering*. Berbeda dengan K-Means pada K-medoid pusat clusternya merupakan salah satu data yang ada didalam cluster sehingga pusat cluster disebut **medoid**. 
-Penentuan nilai K yang optimum bisa digunakan teknik elbow method. Elbow method mengoptimalkan jarak antar data ke centroid atau sering disebut within sum of square. Nilai K yang optimum adalah ketika jumlah cluster ditambah namun penurunan wss tidak lagi drastis.
-
+Sama seperti K-Means, K-Medoid merupakan algoritma clustering yang masuk kedalam kategori *partitioning clustering*. Berbeda dengan K-Means, pada K-medoid pusat dari cluster merupakan salah satu data yang ada didalam cluster sehingga pusat cluster disebut **medoid**. 
+Umumnya untuk menentukan nilai K yang optimum pada K-medoid adalah menggunakan silhouette yang mana mencari nilai dissimilarities terendah untuk setiap cluster, namun pada artikel ini akan digunakan wss agar hasil clustering dapat dibandingkan dengan K-means cluster. untuk mencari nilai WSS yang optimum maka akan digunakan teknik elbow plot.
 
 ```{r}
 # Elbow method
@@ -404,119 +403,43 @@ fviz_nbclust(data_final_scale, pam, method = "wss") +
     geom_vline(xintercept = 8, linetype = 2)+
   geom_hline(yintercept = 1100)+
   labs(subtitle = "Elbow method")
-
 ```
 
-
-
+berdasarkan elbow plot didapat jumlah cluster yang optimum adalah 8 dengan total wss 1100. Fungsi yang digunakan untuk membuat K-medoid clustering adalah `pam()` dari packages `cluster`. data yang digunakan adalah data yang sama ketika proses pembuatan cluster dengan k-means, dan jumlah cluster yang digunakan adalah 8.
 ```{r}
+# K-medoid clustering
 kmedoid <- pam(x = data_final_scale, k = 8)
+
+# Cluster info
+kmedoid$clusinfo %>% 
+  as.data.frame() %>% 
+  mutate(cluster = 1:8,
+         avg_sil = kmedoid$clus.avg.widths, 
+         medoid = rownames(kmedoid$medoids)) %>% 
+  select(cluster, everything())
+```
+
+Setelah berhasil melakukan clustering menggunakan K-Medoid, setiap cluster memiliki informasi. berdasarkan data diatas terdapat 7 variabel yang menunjukkan seperti berikut :
+
+- `cluster` : Id cluster.    
+- `size` : Banyaknya data dalam cluster.    
+- `max_diss` : Jarak terbesar antar data dalam cluster ke medoid-nya.    
+- `av_diss` : Rata rata jarak antar data ke medoid.    
+- `diameter` : Jarak terbesar antar 2 data dalam 1 cluster.    
+- `separation` : Jarak terkecil antar data dalam cluster ke data pada cluster lain.    
+- `medoid` : Data yang menjadi pusat cluster.    
+
+cluster 8 merupakan cluster dengan nilai separation terbesar, hal ini menunjukkan bahwa cluster ini jauh dari cluster yang lain. Cluster 
+2 memiliki diameter terbesar yang berarti luas dari cluster tersebut paling besar. Cluster merupakan cluster 5 dengan jumlah data didalamnya sebanyak 166 dengan rata-rata jarak terkecil yaitu 0.64. untuk melihat karakteristik cluster lebih jelas dapat dilakukan visualisasi.
+```{r}
 fviz_cluster(kmedoid, data_final_scale, ggtheme = theme_minimal())
 ```
 
-
-```{r}
-kmedoid <- pam(x = data_final_scale, k = 8)
-
-kmedoid$clusinfo %>% 
-  as.data.frame() %>% 
-  mutate(avg_sil = kmedoid$clus.avg.widths, 
-         medoid = rownames(kmedoid$medoids))
-```
-
-size : jumlah anggota cluster
-max_diss : nilai perbedaan paling maksimum antara data terhadap medoid (data yang menjadi pusat cluster)
-av_diss : rata rata nilai perbedaan antar data terhadap medoid
-diameter : perbedaan terbesar antar 2 data dalam 1 cluster
-separator : perbedaan paling kecil antar data dalam cluster terhadap data yang berada di cluster lain
-avg_sil : rata2 silhouette value
-medoid : data yang menjadi pusat cluster
-
-## K-Means + SOM
-
-create som grid
-```{r}
-# make grid
-set.seed(122)
-ads.grid <- somgrid(xdim = 4, ydim = 5, topo = "rectangular")
-```
-
-create som 
-```{r}
-# make a SOM model
-set.seed(122)
-ads.model <- som(data_final_scale,
-                 ads.grid,
-                 rlen = 500, 
-                 keep.data = TRUE,
-                 dist.fcts = "euclidean")
-
-plot(ads.model, type = "mapping", pchs = 19, shape = "round")
-```
-
-
-create som based on som result
-```{r}
-kmeansTunning(ads.model$codes[[1]], maxK = 10) 
-set.seed(122)
-som_kmeans <- kmeans(ads.model$codes[[1]], 6)
-```
-
-
-```{r}
-data_final_scale %>% 
-  as.data.frame() %>% 
-  mutate(som_grid = ads.model$unit.classif, 
-          cluster = som_kmeans$cluster[ads.model$unit.classif]) %>% 
-  select(cluster,som_grid) %>% 
-  table() %>% 
-  as.data.frame() %>% 
-  ggplot(aes(x = som_grid, y = cluster)) +
-  geom_raster(aes(fill = Freq))+
-  geom_text(aes(label = Freq), col = "white") +
-  scale_fill_gradient(low = "grey",
-  high = "red") +
-  labs(x = "SOM Grid", 
-       y = "K-Means Cluster") +
-  theme_minimal() +
-  theme(legend.position = "none", 
-        axis.text = element_text(size = 12), 
-        panel.grid = element_blank()) 
-```
-
-```{r}
-plot(ads.model, type = "codes", bgcol = rainbow(6)[som_kmeans$cluster], main = "Cluster Map")
-add.cluster.boundaries(ads.model, clust$cluster)
-```
-
-
-
-```{r fig.width=4, fig.height=6}
-df <- data.frame(x = c(rep(1:4, 5)), 
-                 y = c(rep(1, 4), rep(2, 4), rep(3, 4), rep(4, 4), rep(5,4)),
-                 color = runif(20, 0, 100),
-                 cluster = som_kmeans$cluster)
-df %>% 
-  ggplot(aes(x,y))+
-  geom_tile(aes(fill = as.factor(cluster) ), color = "black") +
-  geom_text(aes(label = paste0("Grid:", 1:20)), nudge_y = 0.05) +
-  geom_text(aes(label = paste0("Cluster:", cluster)), nudge_y = -0.15) +
-  scale_x_continuous(limits = c(0.5,4.5)) +
-  theme_minimal() +
-  theme(panel.grid = element_blank(),
-        axis.text = element_blank(), 
-        axis.title = element_blank(), 
-        legend.position = "none") +
-  scale_fill_manual(values = rainbow(6))
-```
-
 # Cluster Profiling
-
-### K-Means and K-Medoid
-
+## Comparing K-Means and K-Medoid
 
 hasil cluster antara k-medoid dan K-means tidak tidak terlalu jauh berbeda. K-Means dengan jumlah cluster sebanyak 7 cluster memperoleh wss sebesar 1080 sedangkan k_medoid dengan jumlah cluster 8 mendapatkan wss sebesar 1100.  Bila hasil hasil cluster antar 2 metode tersebut dibandingkan secara langsung maka menghasilkan visualisi seperti dibawah
-```{r}
+```{r }
 data_final_scale %>% 
   as.data.frame() %>% 
   transmute(clust_means = clust$cluster, 
@@ -549,6 +472,7 @@ ggpubr::ggarrange(
 ```
 
 
+berdasarkan nilai wss dan jumlah K, K-Means lebih efektif dibandingkan K-medoid oleh sebab itu cluster pada hasil K-means yang akan digunakan pada proses profiling cluster. 
 
 
 
@@ -565,140 +489,129 @@ data_viz <- data_final %>%
   rownames_to_column(var = "symbol") %>% 
   mutate(temp_clust = dbscan_clust$cluster) %>% 
   filter(temp_clust!=0) %>% 
-  mutate(clust_means = clust$cluster, 
-         clust_medoid = kmedoid$clustering) %>% 
-  select(symbol,clust_means,clust_medoid, everything(), -temp_clust) %>% 
+  mutate(cluster = clust$cluster) %>% 
+  select(symbol,cluster, everything(), -temp_clust) %>% 
   rename(cap_2019 = market_cap) %>% 
-  pivot_longer(cols = -(1:3), names_to = c("kind","year"), 
-               names_pattern = "(.*)_(.*)") %>% 
-  pivot_longer(cols = 2:3, names_to = "method", values_to = "cluster")
+  pivot_longer(cols = -(1:2), names_to = c("kind","year"), 
+               names_pattern = "(.*)_(.*)")
 
  data_viz%>% 
-  ggplot(aes(x= cluster, y = value)) +
+  ggplot(aes(x= as.factor(cluster) , y = value)) +
   geom_col(aes(fill = year), position = "dodge") +
-  facet_grid(kind~method, 
-             scales = "free",
-             labeller = labeller(kind = type_v, 
-                                 method = cluster_method)) +
+  facet_wrap(~kind, 
+             scales = "free",ncol = 1,
+             labeller = labeller(kind = type_v)) +
   labs(y = NULL, 
        x = "Cluster") +
   theme_minimal() +
   theme(legend.position = "none",
-        text = element_text(size = 15))
+        text = element_text(size = 15)) 
+```
+
+
+## Cluster profiling {.tabset .tabset-fade .tabset-pills}
+
+### Cluster 1
+
+### Cluster 2
+
+market cap, liq, vol menengah
+
+```{r}
+ data_viz %>% 
+  filter(cluster ==2) %>% 
+  pull(symbol) %>% 
+  unique()
+```
+
+
+
+### Cluster 3
+
+market cap rendah
+liquiditas tinggi
+peringkat liquiditas naik setiap tahun
+
+stocks pada cluster ini banyak dijual 
+```{r}
+stocks_3_symbol <- data_viz %>% 
+  filter(cluster ==5) %>% 
+  pull(symbol) %>% 
+  unique() %>% 
+  paste0(".JK")
   
+
+cluster3_2020 <- tq_get(stocks_3_symbol, from = "2020-03-18")
+cluster3_2020 %>% 
+  arrange(close)
 ```
 
 
 
 
-### K-Means + SOM
+selama tahun 2017 dan 20018 tidak liquid namun pada 
 
+
+```{r fig.width=12, fig.height=4}
+
+data_sd <- data_viz %>% 
+  pivot_wider(names_from = "kind", values_from = value) %>% 
+  group_by(cluster, year) %>% 
+  summarise(sd_close = mean(sdclose)) %>% 
+  group_by(year) %>% 
+  mutate(ranking = rank(sd_close))
+
+clust_3 <- data_sd %>% 
+  filter(cluster == 3)
+
+
+  ggplot(data_sd, aes(x = year, y = ranking, group = cluster)) +
+  geom_line(aes(col = as.factor(cluster)), lwd = 1) + 
+  geom_line(data = clust_3, aes(col = as.factor(cluster))) 
+```
+
+liquiditas tinggi, 
+```{r}
+data_viz %>% 
+  filter(cluster == 3, year == 2019) %>% 
+  pivot_wider(names_from = "kind", values_from = "value") %>% 
+  arrange(desc(cap))
+  
+```
+
+
+### Cluster 4
+
+### Cluster 5
+
+### Cluster 6
+
+### Cluster 7
+market capitalization besar
+liquiditas cukup
+volatilitas rendah
+
+```{r}
+data_viz %>% 
+  filter(cluster == 7) %>% 
+  pull(symbol) %>% 
+  unique()
+```
 
 
 # Kesimpulan
-
-
-
-
-
-**cluster from which method that would you use?**
-
-
-```{r}
-data_final %>% 
-  rownames_to_column(var = "symbol") %>% 
-  mutate(temp_clust = dbscan_clust$cluster) %>% 
-  filter(temp_clust!=0) %>% 
-  mutate(clust_means = clust$cluster, 
-         clust_medoid = kmedoid$clustering) %>% 
-  select(symbol,clust_means,clust_medoid, everything(), -temp_clust) %>% 
-  group_by(clust_means) %>% 
-  summarise_all(mean) %>% 
-  select(-c(2:3))
-```
-
-
-
-```{r}
-data_final %>% 
-  rownames_to_column(var = "symbol") %>% 
-  mutate(temp_clust = dbscan_clust$cluster) %>% 
-  filter(temp_clust!=0) %>% 
-  mutate(clust_means = clust$cluster, 
-         clust_medoid = kmedoid$clustering) %>% 
-  select(symbol,clust_means,clust_medoid, everything(), -temp_clust) %>% 
-  group_by(clust_medoid) %>% 
-  summarise_all(mean) %>% 
-  select(-c(2:3))
-```
-
-```{r fig.height=12}
-type_v <- c("cap" = "Market Capitalization",
-        "medvol" = "Median of Volume Ratio",
-        "sdclose"="Standard Deviation")
-cluster_method <- c("clust_means" = "K-Means Algorithm",
-        "clust_medoid"= "K-Medoid Algorithm", 
-        "clust_som" = "K-Means Using SOM")
-
-
-data_viz <- data_final %>% 
-  rownames_to_column(var = "symbol") %>% 
-  mutate(temp_clust = dbscan_clust$cluster) %>% 
-  filter(temp_clust!=0) %>% 
-  mutate(clust_means = clust$cluster, 
-         clust_medoid = kmedoid$clustering, 
-         clust_som = som_kmeans$cluster[ads.model$unit.classif]) %>% 
-  select(symbol,clust_means,clust_medoid,clust_som, everything(), -temp_clust) %>% 
-  rename(cap_2019 = market_cap) %>% 
-  pivot_longer(cols = -(1:4), names_to = c("kind","year"), 
-               names_pattern = "(.*)_(.*)") %>% 
-  pivot_longer(cols = 2:4, names_to = "method", values_to = "cluster")
-
- data_viz%>% 
-  ggplot(aes(x= cluster, y = value)) +
-  geom_col(aes(fill = year), position = "dodge") +
-  facet_grid(kind~method, 
-             scales = "free",
-             labeller = labeller(kind = type_v, 
-                                 method = cluster_method)) +
-  labs(y = NULL, 
-       x = "Cluster") +
-  theme_minimal() +
-  theme(legend.position = "none",
-        text = element_text(size = 15))
-  
-```
-
-
-
 
 cluster dengan market cap terbesar ?
 cluter paling likuid / tidak ?
 cluster paling volatilitas ?
-
-
-
-
-
-
-
 bedah setiap cluster
-
-
-
-
-
-
-
-# Kesimpulan
-
 berapa cluster optimum?
 metode apa yang digunakan?
 bagaimana profil cluster secara general
 
 
-
 # Glossary
+
 
 
 ## Stock Terms
