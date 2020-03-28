@@ -1,3 +1,0 @@
-- DBSCAN + biplot
-- analisis percluster
-- perbaiki kata kata
